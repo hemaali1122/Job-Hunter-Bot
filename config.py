@@ -22,29 +22,22 @@ TELEGRAM_CHAT_ID = "1237819642"         # e.g. "123456789"  (personal) or "-1001
 #     Arabic and English terms both work.
 # ─────────────────────────────────────────────
 KEYWORDS = [
-    # English
-    "Data Analyst",
-    "Data Analysis",
-    "Excel",
-    "Power BI",
-    "PowerBI",
-    "Dashboard",
-    "Tableau",
-    "SQL",
-    "Python",
-    "Reporting",
-    "Business Intelligence",
-    "BI",
-    # Arabic
-    "تحليل بيانات",
-    "محلل بيانات",
-    "اكسل",
-    "لوحة تحكم",
-    "تقارير",
-    "ذكاء اعمال",
-    "قواعد بيانات",
-]
+    # --- إدخال وتفريغ البيانات (الجديد) ---
+    "إدخال بيانات", "Data Entry", "تفريغ بيانات", "تفريغ محتوى", "نقل بيانات", "تجميع بيانات", "نقل ملفات",
 
+    # --- خدمات السيرة الذاتية ولينكد إن ---
+    "سيرة ذاتية", "CV", "سي في", "تعديل سيرة", "لينكد إن", "LinkedIn",
+
+    # --- خدمات التصميم والعروض ---
+    "لوجو", "Logo", "شعار", "برزنتيشن", "Presentation", "بوربوينت", "PowerPoint",
+
+    # --- خدمات الويب سايت ---
+    "ويب سايت", "Web site", "وردبريس", "WordPress", "Landing Page",
+
+    # --- تحليل البيانات والبرامج المكتبية ---
+    "تحليل بيانات", "Data Analyst", "اكسل", "Excel", "وورد", "Word", 
+    "بور بي اي", "Power BI", "بيثون", "Python", "SQL"
+]
 
 # ─────────────────────────────────────────────
 # 🎯  KEYWORD SCORING
@@ -52,26 +45,12 @@ KEYWORDS = [
 #     Tune these weights to your priorities.
 # ─────────────────────────────────────────────
 KEYWORD_SCORES = {
-    "Power BI":            30,
-    "PowerBI":             30,
-    "Data Analyst":        25,
-    "Data Analysis":       25,
-    "تحليل بيانات":        25,
-    "محلل بيانات":         25,
-    "Dashboard":           20,
-    "Tableau":             20,
-    "Business Intelligence": 20,
-    "SQL":                 15,
-    "Python":              15,
-    "Excel":               10,
-    "اكسل":                10,
-    "Reporting":           10,
-    "تقارير":              10,
-    "BI":                   8,
-    "لوحة تحكم":           20,
-    "ذكاء اعمال":          20,
+    "Power BI": 30, "تحليل بيانات": 30, "Data Analyst": 30,
+    "سيرة ذاتية": 25, "CV": 25,
+    "إدخال بيانات": 20, "Data Entry": 20, "تفريغ بيانات": 20,
+    "Excel": 15, "اكسل": 15, "Python": 15,
+    "لوجو": 10, "برزنتيشن": 10
 }
-
 
 # ─────────────────────────────────────────────
 # ⏱  CHECK INTERVAL
