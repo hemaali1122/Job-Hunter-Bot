@@ -3,7 +3,6 @@ import time
 import json
 import logging
 import hashlib
-import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -45,9 +44,12 @@ def send_telegram(job):
     score = job.get("score", 0)
     stars = "⭐" * min(max(score // 10, 1), 5)
     message = (
-        f"🚀 *فرصة عمل جديدة!*\n\n📌 *العنوان:* {job['title']}\n"
-        f"💰 *الميزانية:* {job['budget']}\n🌐 *المنصة:* {job['platform']}\n"
-        f"🎯 *التقييم:* {score} {stars}\n🔗 [اضغط هنا للتقديم]({job['url']})"
+        f"🚀 *فرصة صيد جديدة يا هندسة!*\n\n"
+        f"📌 *العنوان:* {job['title']}\n"
+        f"💰 *الميزانية:* {job['budget']}\n"
+        f"🌐 *المنصة:* {job['platform']}\n"
+        f"🎯 *التقييم:* {score} {stars}\n"
+        f"🔗 [اضغط هنا للتقديم]({job['url']})"
     )
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
@@ -60,32 +62,38 @@ def fetch_rss(url, name):
         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
         soup = BeautifulSoup(resp.content, "xml")
         for item in soup.find_all("item"):
-            title = item.find("title").text
-            link = item.find("link").text
-            desc = BeautifulSoup(item.find("description").text, "html.parser").get_text()
+            title = item.find("title").text if item.find("title") else "بدون عنوان"
+            link = item.find("link").text if item.find("link") else ""
+            desc_tag = item.find("description")
+            desc = BeautifulSoup(desc_tag.text, "html.parser").get_text() if desc_tag else ""
             jobs.append({"title": title, "url": link, "description": desc, "platform": name, "budget": extract_budget(desc)})
     except: pass
     return jobs
 
 def run_tracker():
-    log.info("🚀 جاري الصيد في كل المنصات...")
+    log.info("🚀 رادارات الصيد تعمل الآن على كافة المنصات...")
     seen = load_seen_jobs()
+    
+    # القائمة المحدثة للمنصات (مستقل، خمسات، كفيل، بعيد، نفذلي)
     sources = [
         ("https://mostaql.com/projects/feed", "Mostaql"),
         ("https://khamsat.com/projects/feed", "Khamsat"),
         ("https://kafiil.com/feed/projects", "Kafiil"),
-        ("https://baeed.com/feed", "Baeed")
+        ("https://baeed.com/feed", "Baeed"),
+        ("https://nafezly.com/projects/feed", "Nafezly") # منصة نفذلي
     ]
     
     all_jobs = []
-    for url, name in sources: all_jobs.extend(fetch_rss(url, name))
+    for url, name in sources: 
+        all_jobs.extend(fetch_rss(url, name))
     
-    # Wuzzuf search
-    for term in ["data", "excel", "power-bi"]:
+    # Wuzzuf (تعديل الروابط لضمان عدم حدوث 404)
+    for term in ["data-entry", "excel", "power-bi", "graphic-design"]:
         all_jobs.extend(fetch_rss(f"https://wuzzuf.net/search/jobs/feed/?q={term}", "Wuzzuf"))
 
     new_matches = []
     for job in all_jobs:
+        if not job["url"]: continue
         jid = make_job_id(job["url"])
         text = (job["title"] + " " + job["description"]).lower()
         if jid not in seen and any(kw.lower() in text for kw in KEYWORDS):
