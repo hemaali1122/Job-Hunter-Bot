@@ -1,25 +1,21 @@
 # config.py
 import os
 
-# إعدادات تليجرام (يفضل وضعها في GitHub Secrets للأمان)
 TELEGRAM_TOKEN = "8707793026:AAG0WZMRIb54ibbq0EDKGNlq75Q5Xok1NuA"
 TELEGRAM_CHAT_ID = "1237819642"
 
-# الكلمات المفتاحية (قائمة الصيد)
 KEYWORDS = [
     "إدخال بيانات", "Data Entry", "تفريغ بيانات", "تفريغ محتوى", "نقل بيانات", "تجميع بيانات",
     "سيرة ذاتية", "CV", "سي في", "تعديل سيرة", "لينكد إن", "LinkedIn",
     "لوجو", "Logo", "شعار", "برزنتيشن", "Presentation", "بوربوينت", "PowerPoint",
-    "ويب سايت", "Web site", "وردبريس", "WordPress", "صفحة هبوط", "Landing Page",
+    "ويب سايت", "وردبريس", "WordPress", "صفحة هبوط", "Landing Page",
     "تحليل بيانات", "Data Analyst", "اكسل", "Excel", "وورد", "Word", 
     "بور بي اي", "Power BI", "PowerBI", "بيثون", "Python", "SQL"
 ]
 
-# توزيع الدرجات (أولوية التنبيه)
 KEYWORD_SCORES = {
     "Power BI": 30, "PowerBI": 30, "تحليل بيانات": 30, "Data Analyst": 30,
-    "سيرة ذاتية": 25, "CV": 25, "سي في": 25,
-    "إدخال بيانات": 20, "Data Entry": 20,
+    "سيرة ذاتية": 25, "CV": 25, "إدخال بيانات": 20, "Data Entry": 20,
     "Excel": 15, "اكسل": 15, "Logo": 15, "لوجو": 15
 }
 
