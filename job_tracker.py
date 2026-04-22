@@ -1,4 +1,3 @@
-# job_tracker.py - نسخة إبراهيم الصافية (بدون اشتراكات إجبارية)
 import time, json, logging, hashlib, re, requests
 from datetime import datetime
 from pathlib import Path
@@ -28,8 +27,9 @@ def send_telegram(job):
     )
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}, timeout=15)
-    except: pass
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}, timeout=15)
+        if r.status_code != 200: log.error(f"Telegram error: {r.text}")
+    except Exception as e: log.error(f"Send failed: {e}")
 
 def fetch_rss(url, name):
     jobs = []
@@ -39,16 +39,20 @@ def fetch_rss(url, name):
         for item in soup.find_all("item"):
             title = item.find("title").text if item.find("title") else ""
             link = item.find("link").text if item.find("link") else ""
-            desc = BeautifulSoup(item.find("description").text, "html.parser").get_text() if item.find("description") else ""
+            desc_raw = item.find("description").text if item.find("description") else ""
+            desc = BeautifulSoup(desc_raw, "html.parser").get_text()
             jobs.append({"title": title, "url": link, "description": desc, "platform": name, "budget": extract_budget(desc)})
     except: pass
     return jobs
 
 def run_tracker():
     log.info("🚀 رادارات الصيد تعمل الآن...")
+    seen = set()
     if Path(SEEN_JOBS_FILE).exists():
-        with open(SEEN_JOBS_FILE, "r", encoding="utf-8") as f: seen = set(json.load(f).get("seen", []))
-    else: seen = set()
+        try:
+            with open(SEEN_JOBS_FILE, "r", encoding="utf-8") as f:
+                seen = set(json.load(f).get("seen", []))
+        except: pass
 
     sources = [
         ("https://mostaql.com/projects/feed", "Mostaql"),
@@ -59,7 +63,8 @@ def run_tracker():
     ]
     
     all_jobs = []
-    for url, name in sources: all_jobs.extend(fetch_rss(url, name))
+    for url, name in sources:
+        all_jobs.extend(fetch_rss(url, name))
     
     new_matches = []
     for job in all_jobs:
@@ -75,7 +80,9 @@ def run_tracker():
         seen.add(job["id"])
         time.sleep(1)
 
-    with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as f: json.dump({"seen": list(seen)[-MAX_SEEN_JOBS:]}, f)
+    with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as f:
+        json.dump({"seen": list(seen)[-MAX_SEEN_JOBS:]}, f)
+    log.info(f"✅ تم الانتهاء. وجدنا {len(new_matches)} وظيفة جديدة.")
 
 if __name__ == "__main__":
     run_tracker()
