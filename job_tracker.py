@@ -1,74 +1,49 @@
 import requests
-from bs4 import BeautifulSoup
 import time
-import logging
-import json
-from pathlib import Path
+from bs4 import BeautifulSoup
 
-# إعداد اللوجز
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
-
-# --- بياناتك الشخصية ---
+# --- بياناتك الشخصية (مدمجة لضمان العمل) ---
 TOKEN = "8707793026:AAG0WZMRIb54ibbq0EDKGNlq75Q5Xok1NuA"
 CHAT_ID = "1237819642"
-SEEN_JOBS_FILE = "seen_jobs.json"
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
-        requests.post(url, json=payload, timeout=10)
-    except: pass
+        r = requests.post(url, json=payload, timeout=15)
+        return r.json() # عشان نشوف الرد في الـ Logs
+    except Exception as e:
+        return str(e)
 
 def run():
-    log.info("🚀 رادار الصيد الشامل بدأ العمل...")
+    print("🚀 بدء عملية الفحص...")
     
-    # تحميل الذاكرة عشان ميبعتش الحاجة مرتين
-    seen = set()
-    if Path(SEEN_JOBS_FILE).exists():
-        try:
-            with open(SEEN_JOBS_FILE, "r", encoding="utf-8") as f:
-                seen = set(json.load(f).get("seen", []))
-        except: pass
+    # 1. اختبار الاتصال (لازم يوصلك رسالة حالاً)
+    res = send_telegram("🚨 إبراهيم! لو الرسالة دي وصلت، يبقى البوت شغال والـ ID سليم. جاري سحب المشاريع...")
+    print(f"نتيجة اختبار تليجرام: {res}")
 
-    # المنصات اللي طلبتها في الصور
+    # 2. فحص المنصات (هيجيب لك كل شيء بدون استثناء)
     sources = [
-        ("https://mostaql.com/projects/feed", "مستقل"),
-        ("https://khamsat.com/projects/feed", "خمسات"),
-        ("https://kafiil.com/feed/projects", "كفيل"),
-        ("https://nafezly.com/projects/feed", "نفذلي"),
-        ("https://baeed.com/feed", "بعيد"),
-        ("https://maatloob.com/projects/feed", "مطلوب") 
+        ("https://mostaql.com/projects/feed", "Mostaql"),
+        ("https://khamsat.com/projects/feed", "Khamsat"),
+        ("https://kafiil.com/feed/projects", "Kafiil"),
+        ("https://nafezly.com/projects/feed", "Nafezly")
     ]
     
-    new_jobs_found = 0
-    for rss_url, name in sources:
+    for url, name in sources:
         try:
-            r = requests.get(rss_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-            if r.status_code != 200: continue
-            
+            print(f"فحص {name}...")
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
             soup = BeautifulSoup(r.content, "xml")
-            items = soup.find_all("item")
+            items = soup.find_all("item")[:5] # هات آخر 5 مشاريع بس للتجربة
             
             for item in items:
                 title = item.find("title").text
                 link = item.find("link").text
-                
-                # هنا شلنا الفلترة (KEYWORDS) عشان يبعت كل حاجة
-                if link not in seen:
-                    msg = f"🔔 *مشروع جديد نزل الآن!*\n\n📌 *العنوان:* {title}\n🌐 *المنصة:* {name}\n🔗 [تفاصيل المشروع]({link})"
-                    send_telegram(msg)
-                    seen.add(link)
-                    new_jobs_found += 1
-                    time.sleep(1) # تأخير عشان تليجرام
-        except: continue
-
-    # حفظ الذاكرة (آخر 500 لينك عشان الملف ميكبرش)
-    with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as f:
-        json.dump({"seen": list(seen)[-500:]}, f)
-
-    log.info(f"🏁 تم الفحص. وجدنا {new_jobs_found} مشاريع جديدة.")
+                send_telegram(f"🔔 *مشروع من {name}*\n📌 {title}\n🔗 {link}")
+                time.sleep(1)
+        except Exception as e:
+            print(f"خطأ في {name}: {e}")
 
 if __name__ == "__main__":
     run()
