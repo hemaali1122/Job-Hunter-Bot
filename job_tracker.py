@@ -1,83 +1,64 @@
-import time
-import json
-import logging
-import hashlib
-import re
 import requests
-from datetime import datetime
-from pathlib import Path
+import hashlib
 from bs4 import BeautifulSoup
+import time
+import logging
 
-# --- إعداداتك الخاصة ---
-TELEGRAM_TOKEN = "8707793026:AAG0WZMRIb54ibbq0EDKGNlq75Q5Xok1NuA"
-TELEGRAM_CHAT_ID = "1237819642"
-
-# الكلمات المفتاحية
-KEYWORDS = [
-    "Power BI", "PowerBI", "باور بي اي", "تحليل بيانات", "Data Analyst", 
-    "إدخال بيانات", "Data Entry", "تفريغ بيانات", "تجميع بيانات",
-    "اكسل", "Excel", "جداول بيانات", "سيرة ذاتية", "CV"
-]
-
-SEEN_JOBS_FILE = "seen_jobs.json"
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# إعداد اللوجز عشان نشوف المشكلة فين في الـ Actions
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-def send_telegram(job):
-    message = (
-        f"🎯 *مشروع متاح حالياً يا إبراهيم!*\n\n"
-        f"📌 *العنوان:* {job['title']}\n"
-        f"💰 *الميزانية:* {job['budget']}\n"
-        f"🌐 *المنصة:* {job['platform']}\n\n"
-        f"🔗 [اضغط هنا للتقديم]({job['url']})"
-    )
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}, timeout=15)
-    except: pass
+# --- إعداداتك المباشرة ---
+TOKEN = "8707793026:AAG0WZMRIb54ibbq0EDKGNlq75Q5Xok1NuA"
+CHAT_ID = "1237819642"
 
-def fetch_rss(url, name):
-    jobs = []
-    try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-        soup = BeautifulSoup(resp.content, "xml")
-        for item in soup.find_all("item"):
-            title = item.find("title").text if item.find("title") else ""
-            link = item.find("link").text if item.find("link") else ""
-            desc_raw = item.find("description").text if item.find("description") else ""
-            desc = BeautifulSoup(desc_raw, "html.parser").get_text()
-            jobs.append({"title": title, "url": link, "description": desc, "platform": name, "budget": "مشاهدة في الموقع"})
-    except: pass
-    return jobs
+# كلمات بحث "واسعة جداً" للتجربة
+KEYWORDS = ["مشروع", "مطلوب", "عمل", "بيانات", "تصميم", "اكسل", "Power"]
 
-def run_tracker():
-    log.info("🚀 جاري جلب كل المشاريع المتاحة حالياً...")
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        return r.json()
+    except Exception as e:
+        return str(e)
+
+def run():
+    log.info("🚀 بدء فحص الاتصال...")
+    # رسالة تجربة إجبارية أول ما يشتغل
+    test_res = send_telegram("🚨 يا إبراهيم! لو قريت الرسالة دي يبقى السيستم شغال والاتصال سليم 100%.. جاري البحث عن وظائف الآن 👇")
+    log.info(f"Test message result: {test_res}")
     
-    # --- حركة تصفير الذاكرة عشان يبعت لك المتاح دلوقتي حالاً ---
-    seen = set() # بنبدأ بذاكرة فاضية في كل لفة تجريبية
-    
-    sources = [
+    # الروابط
+    urls = [
         ("https://mostaql.com/projects/feed", "Mostaql"),
         ("https://nafezly.com/projects/feed", "Nafezly"),
-        ("https://kafiil.com/feed/projects", "Kafiil"),
-        ("https://khamsat.com/projects/feed", "Khamsat")
+        ("https://kafiil.com/feed/projects", "Kafiil")
     ]
     
-    all_jobs = []
-    for url, name in sources:
-        all_jobs.extend(fetch_rss(url, name))
-    
-    sent_count = 0
-    for job in all_jobs:
-        content = (job["title"] + " " + job["description"]).lower()
-        if any(kw.lower() in content for kw in KEYWORDS):
-            send_telegram(job)
-            sent_count += 1
-            time.sleep(1) # تأخير بسيط عشان تليجرام ميعملش بلوك
-            if sent_count > 10: break # كفاية 10 مشاريع للتجربة عشان الموبايل ميهنجش
+    found_any = False
+    for rss_url, name in urls:
+        try:
+            log.info(f"Checking {name}...")
+            r = requests.get(rss_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            soup = BeautifulSoup(r.content, "xml")
+            items = soup.find_all("item")
+            
+            for item in items:
+                title = item.find("title").text
+                link = item.find("link").text
+                # فحص الكلمات
+                if any(kw.lower() in title.lower() for kw in KEYWORDS):
+                    msg = f"✅ لقطنا شغلانة من {name}!\n📌 العنوان: {title}\n🔗 الرابط: {link}"
+                    send_telegram(msg)
+                    found_any = True
+                    time.sleep(1)
+        except Exception as e:
+            log.error(f"Error in {name}: {e}")
 
-    log.info(f"✅ تم إرسال {sent_count} مشروع لموبايلك.")
+    if not found_any:
+        send_telegram("🧐 بحثت في المنصات ومالقيتش مشاريع جديدة مطابقة للكلمات حالياً.")
 
 if __name__ == "__main__":
-    run_tracker()
+    run()
