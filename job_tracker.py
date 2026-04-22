@@ -1,8 +1,13 @@
 import requests
 import time
 from bs4 import BeautifulSoup
+import logging
 
-# --- بياناتك الشخصية (مدمجة لضمان العمل) ---
+# إعداد اللوجز
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+# --- بياناتك الشخصية ---
 TOKEN = "8707793026:AAG0WZMRIb54ibbq0EDKGNlq75Q5Xok1NuA"
 CHAT_ID = "1237819642"
 
@@ -10,40 +15,52 @@ def send_telegram(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
-        r = requests.post(url, json=payload, timeout=15)
-        return r.json() # عشان نشوف الرد في الـ Logs
-    except Exception as e:
-        return str(e)
+        requests.post(url, json=payload, timeout=15)
+    except:
+        pass
 
 def run():
-    print("🚀 بدء عملية الفحص...")
+    log.info("🚀 رادار الصيد الشامل بدأ العمل...")
     
-    # 1. اختبار الاتصال (لازم يوصلك رسالة حالاً)
-    res = send_telegram("🚨 إبراهيم! لو الرسالة دي وصلت، يبقى البوت شغال والـ ID سليم. جاري سحب المشاريع...")
-    print(f"نتيجة اختبار تليجرام: {res}")
+    # رسالة ترحيب لبدء الفحص
+    send_telegram("📡 *بدء عملية مسح شاملة لكافة المنصات الآن...*")
 
-    # 2. فحص المنصات (هيجيب لك كل شيء بدون استثناء)
+    # الروابط الرسمية للـ RSS
     sources = [
-        ("https://mostaql.com/projects/feed", "Mostaql"),
-        ("https://khamsat.com/projects/feed", "Khamsat"),
-        ("https://kafiil.com/feed/projects", "Kafiil"),
-        ("https://nafezly.com/projects/feed", "Nafezly")
+        ("https://mostaql.com/projects/feed", "Mostaql - مستقل"),
+        ("https://khamsat.com/projects/feed", "Khamsat - خمسات"),
+        ("https://kafiil.com/feed/projects", "Kafiil - كفيل"),
+        ("https://nafezly.com/projects/feed", "Nafezly - نفذلي"),
+        ("https://baeed.com/feed", "Baeed - بعيد")
     ]
     
-    for url, name in sources:
+    found_total = 0
+    for rss_url, name in sources:
         try:
-            print(f"فحص {name}...")
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-            soup = BeautifulSoup(r.content, "xml")
-            items = soup.find_all("item")[:5] # هات آخر 5 مشاريع بس للتجربة
+            log.info(f"فحص منصة {name}...")
+            # استخدام User-Agent عشان المواقع متفتكرناش بوتات وتعمل بلوك
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            r = requests.get(rss_url, headers=headers, timeout=20)
             
-            for item in items:
-                title = item.find("title").text
-                link = item.find("link").text
-                send_telegram(f"🔔 *مشروع من {name}*\n📌 {title}\n🔗 {link}")
-                time.sleep(1)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.content, "xml")
+                items = soup.find_all("item")
+                
+                # هناخد أول 5 مشاريع "فقط" من كل موقع عشان موبايلك ميهنجش في أول تجربة
+                for item in items[:5]:
+                    title = item.find("title").text
+                    link = item.find("link").text
+                    
+                    msg = f"🔔 *مشروع متاح الآن!*\n\n📌 *العنوان:* {title}\n🌐 *المنصة:* {name}\n🔗 [اضغط هنا للتقديم]({link})"
+                    send_telegram(msg)
+                    found_total += 1
+                    time.sleep(1.5) # تأخير بسيط لضمان وصول الرسائل بالترتيب
+            else:
+                log.warning(f"تعذر الوصول لـ {name}، كود الحالة: {r.status_code}")
         except Exception as e:
-            print(f"خطأ في {name}: {e}")
+            log.error(f"خطأ في {name}: {e}")
+
+    send_telegram(f"🏁 *تم الانتهاء من المسح الشامل.*\nوجدنا {found_total} مشروع متاح للتقديم حالياً.")
 
 if __name__ == "__main__":
     run()
