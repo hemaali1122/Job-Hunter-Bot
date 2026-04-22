@@ -6,6 +6,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
+# --- بياناتك ---
 TOKEN = "8707793026:AAG0WZMRIb54ibbq0EDKGNlq75Q5Xok1NuA"
 CHAT_ID = "1237819642"
 
@@ -16,49 +17,41 @@ def send_telegram(text):
     except: pass
 
 def run():
-    send_telegram("🚀 *بدء هجوم الصيد الشامل.. جاري اختراق حواجز المنصات وسحب المشاريع الآن!*")
+    send_telegram("📡 *بدء عملية الصيد من الروابط الرسمية (RSS)... جاري جلب المشاريع الآن!*")
     
+    # الروابط الرسمية التي لا يمكن حظرها بسهولة
     sources = [
-        ("https://mostaql.com/projects", "مستقل"),
-        ("https://nafezly.com/projects", "نفذلي"),
-        ("https://kafiil.com/projects", "كفيل")
+        ("https://mostaql.com/projects/feed", "Mostaql - مستقل"),
+        ("https://khamsat.com/projects/feed", "Khamsat - خمسات"),
+        ("https://kafiil.com/feed/projects", "Kafiil - كفيل"),
+        ("https://nafezly.com/projects/feed", "Nafezly - نفذلي")
     ]
     
     found_total = 0
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-    for url, name in sources:
+    for rss_url, name in sources:
         try:
-            log.info(f"Scanning {name}...")
-            r = requests.get(url, headers=headers, timeout=25)
-            soup = BeautifulSoup(r.content, "html.parser")
-            
-            # محرك بحث ذكي حسب هيكلة كل موقع
-            links = []
-            if name == "مستقل":
-                links = soup.select("h3 a")[:10]
-            elif name == "نفذلي":
-                links = soup.select("h2 a")[:10]
-            elif name == "كفيل":
-                links = soup.select("h3 a")[:10]
-
-            for link in links:
-                title = link.get_text().strip()
-                href = link.get("href")
-                if not href.startswith("http"):
-                    base = "https://mostaql.com" if name == "مستقل" else "https://nafezly.com" if name == "نفذلي" else "https://kafiil.com"
-                    href = base + href
+            log.info(f"فحص {name}...")
+            r = requests.get(rss_url, headers=headers, timeout=20)
+            if r.status_code == 200:
+                # نستخدم 'xml' لأن الروابط دي بتخرج بيانات بصيغة XML
+                soup = BeautifulSoup(r.content, "xml")
+                items = soup.find_all("item")
                 
-                send_telegram(f"💎 *فرصة جديدة من {name}*\n📌 {title}\n🔗 [اضغط للتقديم]({href})")
-                found_total += 1
-                time.sleep(2)
+                for item in items[:10]: # هات أول 10 مشاريع من كل موقع
+                    title = item.find("title").text.strip()
+                    link = item.find("link").text.strip()
+                    
+                    send_telegram(f"🔥 *مشروع جديد من {name}*\n📌 {title}\n🔗 [اضغط للتقديم]({link})")
+                    found_total += 1
+                    time.sleep(1) # تأخير لضمان وصول الرسائل
+            else:
+                log.error(f"فشل الوصول لـ {name}: {r.status_code}")
         except Exception as e:
-            log.error(f"Error in {name}: {e}")
+            log.error(f"خطأ في {name}: {e}")
 
-    send_telegram(f"🏁 *انتهت الغارة بنجاح!* وجدنا {found_total} مشروع متاح حالياً. استعد للتقديم يا هندسة!")
+    send_telegram(f"🏁 *انتهى الفحص!* وجدنا {found_total} مشروع متاح. لو الرقم لسه صفر، جرب تشغل الـ Action كمان 5 دقائق.")
 
 if __name__ == "__main__":
     run()
