@@ -145,6 +145,4 @@ def run():
 # لوب مستمر
 # -----------------------------
 if __name__ == "__main__":
-    while True:
-        run()
-        time.sleep(POLL_INTERVAL)
+    run()
