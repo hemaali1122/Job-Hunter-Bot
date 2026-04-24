@@ -1,408 +1,306 @@
 """
-RSS Job Feed Monitor with Telegram Notifications
-=================================================
-Production-ready script that:
-- Monitors multiple RSS feeds for freelance jobs
-- Supports Arabic content (UTF-8)
-- Scores and filters jobs by keywords
-- Persists seen jobs to avoid duplicates
-- Sends rich Telegram messages
-- Logs everything for easy debugging
+مراقب وظائف الفريلانس — نسخة محسّنة
+يدور على وظائف حقيقية ويبعتها على تيليجرام
 """
 
 import feedparser
+import requests
 import json
-import logging
-import os
-import re
 import time
-import unicodedata
-from datetime import datetime
+import logging
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-import requests
+# =====================================================================
+# ⚙️ الإعدادات — عدّل هنا
+# =====================================================================
 
-# ---------------------------------------------------------------------------
-# CONFIGURATION  ← Edit this section or move to config.py / .env
-# ---------------------------------------------------------------------------
+TELEGRAM_BOT_TOKEN = "ضع_التوكن_هنا"
+TELEGRAM_CHAT_ID   = "ضع_الشات_ID_هنا"
 
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-TELEGRAM_CHAT_ID   = "YOUR_CHAT_ID_HERE"
+# الكلمات المفتاحية اللي بتشتغل فيها مع النقاط
+KEYWORD_SCORES = {
+    # Python / Backend
+    "python":       10,
+    "django":       10,
+    "flask":        10,
+    "fastapi":      10,
+    "bot":           8,
+    "scraping":      8,
+    "automation":    8,
+    "api":           7,
+    "backend":       7,
+    "script":        6,
 
-# RSS feeds to monitor
-RSS_FEEDS = [
-    "https://www.upwork.com/ab/feed/jobs/rss?q=python&sort=recency",
-    "https://www.freelancer.com/rss/jobs.xml",
-    # Add more feeds here
-]
-
-# Keywords with scores (higher = more relevant)
-KEYWORD_SCORES: dict[str, int] = {
-    # High value
-    "python":        10,
-    "django":        10,
-    "fastapi":       10,
-    "flask":         8,
-    "api":           8,
-    "automation":    7,
-    "scraping":      7,
-    "data":          6,
-    "backend":       6,
-    # Arabic equivalents
-    "بايثون":        10,
+    # عربي
+    "بايثون":       10,
     "برمجة":         8,
+    "بوت":           8,
+    "سكريبت":        7,
     "تطوير":         6,
-    "واجهة برمجية":  8,
-    "أتمتة":         7,
-    # Medium value
-    "javascript":    5,
-    "react":         5,
-    "node":          5,
-    # Low value / noise
-    "freelance":     1,
-    "remote":        1,
+    "واجهة":         5,
+    "أتمتة":         8,
 }
 
-# Minimum score for a job to be sent to Telegram (0 = send all)
-MIN_SCORE = 5
+# أقل نقاط عشان الوظيفة تتبعت (صفر = ابعت كل حاجة)
+MIN_SCORE = 1
 
-# File to persist seen job IDs/links
-SEEN_JOBS_FILE = "seen_jobs.json"
+# آخر كام ساعة تجيب منها وظائف (بدل is_today اللي كانت بتحذف كل حاجة)
+HOURS_BACK = 72  # آخر 3 أيام — قلّلها لو عايز
 
-# How often to run (seconds) — set to 0 to run once and exit
-POLL_INTERVAL = 300  # 5 minutes
+# ملف حفظ الوظائف المشوفة (عشان ميتكررش)
+SEEN_FILE = "seen_jobs.json"
 
-# ---------------------------------------------------------------------------
-# LOGGING SETUP
-# ---------------------------------------------------------------------------
+# فيدات RSS — عدّلها حسب تخصصك
+RSS_FEEDS = [
+    # Upwork - Python
+    "https://www.upwork.com/ab/feed/jobs/rss?q=python&sort=recency&paging=0%3B10",
+    # Upwork - Django
+    "https://www.upwork.com/ab/feed/jobs/rss?q=django&sort=recency&paging=0%3B10",
+    # Upwork - Bot
+    "https://www.upwork.com/ab/feed/jobs/rss?q=telegram+bot&sort=recency&paging=0%3B10",
+    # Freelancer
+    "https://www.freelancer.com/rss/jobs.xml",
+    # مستقل
+    "https://mostaql.com/projects/feed?category=software-development",
+]
 
+# =====================================================================
+# LOGGING
+# =====================================================================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("rss_monitor.log", encoding="utf-8"),
-    ],
+        logging.FileHandler("monitor.log", encoding="utf-8"),
+    ]
 )
 log = logging.getLogger(__name__)
 
+# =====================================================================
+# حفظ الوظائف المشوفة
+# =====================================================================
 
-# ---------------------------------------------------------------------------
-# PERSISTENT STORAGE — seen jobs
-# ---------------------------------------------------------------------------
-
-def load_seen_jobs() -> set:
-    """Load previously seen job identifiers from disk."""
-    path = Path(SEEN_JOBS_FILE)
-    if path.exists():
+def load_seen() -> set:
+    p = Path(SEEN_FILE)
+    if p.exists():
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            seen = set(data.get("seen", []))
-            log.info("Loaded %d seen job IDs from %s", len(seen), SEEN_JOBS_FILE)
+            data = json.loads(p.read_text(encoding="utf-8"))
+            seen = set(data.get("ids", []))
+            log.info("✅ محمّل %d وظيفة مشوفة من القرص", len(seen))
             return seen
-        except (json.JSONDecodeError, KeyError) as exc:
-            log.warning("Could not read %s (%s) — starting fresh.", SEEN_JOBS_FILE, exc)
+        except Exception as e:
+            log.warning("⚠️ مش قادر يقرأ %s: %s", SEEN_FILE, e)
     return set()
 
+def save_seen(seen: set):
+    Path(SEEN_FILE).write_text(
+        json.dumps({"ids": list(seen), "updated": datetime.utcnow().isoformat()},
+                   ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
 
-def save_seen_jobs(seen: set) -> None:
-    """Persist seen job identifiers to disk."""
-    with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as f:
-        json.dump({"seen": list(seen), "updated": datetime.utcnow().isoformat()}, f, ensure_ascii=False, indent=2)
-    log.debug("Saved %d seen job IDs.", len(seen))
+# =====================================================================
+# تحليل الوقت
+# =====================================================================
 
+def is_recent(published_parsed) -> bool:
+    """بدل is_today — بييجب آخر N ساعة بدل اليوم بس"""
+    if not published_parsed:
+        return True  # لو مفيش تاريخ، خليها تعدي (أفضل من ما تتحذفش)
+    try:
+        job_time = datetime(*published_parsed[:6], tzinfo=timezone.utc)
+        cutoff   = datetime.now(timezone.utc) - timedelta(hours=HOURS_BACK)
+        return job_time >= cutoff
+    except Exception:
+        return True  # في حالة error، خليها تعدي
 
-# ---------------------------------------------------------------------------
-# TEXT UTILITIES
-# ---------------------------------------------------------------------------
+# =====================================================================
+# نظام النقاط
+# =====================================================================
 
-def normalize_text(text: str) -> str:
-    """
-    Lowercase + normalize unicode so Arabic and Latin text both match cleanly.
-    Preserves Arabic characters while stripping diacritics.
-    """
-    if not text:
-        return ""
-    # Normalize unicode (NFC keeps Arabic composed correctly)
-    text = unicodedata.normalize("NFC", text)
-    return text.lower()
-
-
-def extract_text(entry: feedparser.FeedParserDict) -> str:
-    """Extract all searchable text from a feed entry."""
-    parts = []
-    for field in ("title", "summary", "description", "content"):
-        value = getattr(entry, field, None)
-        if value is None:
-            continue
-        if isinstance(value, list):          # content field is a list of dicts
-            for block in value:
-                if isinstance(block, dict):
-                    parts.append(block.get("value", ""))
-                else:
-                    parts.append(str(block))
-        else:
-            parts.append(str(value))
-    # Strip HTML tags for clean text matching
-    combined = " ".join(parts)
-    combined = re.sub(r"<[^>]+>", " ", combined)   # remove HTML
-    combined = re.sub(r"\s+", " ", combined).strip()
-    return combined
-
-
-# ---------------------------------------------------------------------------
-# KEYWORD SCORING
-# ---------------------------------------------------------------------------
-
-def score_job(text: str) -> tuple[int, list[str]]:
-    """
-    Score a job entry against KEYWORD_SCORES.
-    Returns (total_score, matched_keywords).
-    Matching is:
-      - Case-insensitive
-      - Partial (substring) match
-      - Unicode-normalized (handles Arabic)
-    """
-    normalized = normalize_text(text)
+def score_job(title: str, description: str = "") -> tuple[int, list[str]]:
+    """بيحسب نقاط الوظيفة ويرجع (المجموع، الكلمات اللي اتطابقت)"""
+    text = (title + " " + description).lower()
     total = 0
     matched = []
-    for keyword, points in KEYWORD_SCORES.items():
-        kw_norm = normalize_text(keyword)
-        if kw_norm in normalized:
-            total += points
-            matched.append(keyword)
+    for kw, pts in KEYWORD_SCORES.items():
+        if kw.lower() in text:
+            total += pts
+            matched.append(kw)
     return total, matched
 
+# =====================================================================
+# جلب الفيدات
+# =====================================================================
 
-# ---------------------------------------------------------------------------
-# RSS PARSING
-# ---------------------------------------------------------------------------
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; JobBot/1.0; +https://example.com)"
+}
 
 def fetch_feed(url: str) -> list[dict]:
-    """
-    Parse a single RSS/Atom feed using feedparser.
-    Returns a list of job dicts.
-    """
-    log.info("Fetching feed: %s", url)
+    log.info("📡 بيفحص: %s", url)
     try:
-        feed = feedparser.parse(url)
-    except Exception as exc:
-        log.error("Exception parsing feed %s: %s", url, exc)
+        # feedparser بيعمل HTTP request لوحده، بنديله custom agent
+        feed = feedparser.parse(url, request_headers=HEADERS)
+    except Exception as e:
+        log.error("❌ Error في الفيد %s: %s", url, e)
         return []
 
-    if feed.bozo and feed.bozo_exception:
-        # bozo=True means the feed is not well-formed, but entries may still be usable
-        log.warning("Feed %s has markup issues: %s", url, feed.bozo_exception)
+    if feed.bozo:
+        log.warning("⚠️ فيد مش standard: %s | السبب: %s", url, feed.bozo_exception)
 
     entries = feed.entries
-    log.info("  → %d entries found in feed", len(entries))
+    feed_name = feed.feed.get("title", url[:50])
+    log.info("   وجد %d وظيفة في '%s'", len(entries), feed_name)
 
     jobs = []
     for entry in entries:
-        # Unique identifier: prefer 'id', fall back to 'link', then title hash
+        # ID فريد
         job_id = (
-            getattr(entry, "id", None)
-            or getattr(entry, "link", None)
-            or str(hash(getattr(entry, "title", "")))
+            getattr(entry, "id",   None) or
+            getattr(entry, "link", None) or
+            str(hash(entry.get("title", "")))
         )
-        title = getattr(entry, "title", "No title")
-        link  = getattr(entry, "link",  "No link")
-        full_text = extract_text(entry)
+        # وصف الوظيفة
+        desc = ""
+        if hasattr(entry, "summary"):
+            desc = entry.summary
+        elif hasattr(entry, "description"):
+            desc = entry.description
+
+        # إزالة HTML من الوصف
+        import re
+        desc_clean = re.sub(r"<[^>]+>", " ", desc)
 
         jobs.append({
             "id":        job_id,
-            "title":     title,
-            "link":      link,
-            "text":      full_text,
-            "source":    feed.feed.get("title", url),
+            "title":     entry.get("title", "بدون عنوان"),
+            "link":      entry.get("link",  "#"),
+            "desc":      desc_clean[:300],
+            "published": getattr(entry, "published_parsed", None),
+            "source":    feed_name,
         })
 
     return jobs
 
+# =====================================================================
+# إرسال تيليجرام
+# =====================================================================
 
-def fetch_all_feeds(feed_urls: list[str]) -> list[dict]:
-    """Fetch and aggregate jobs from all configured feeds."""
-    all_jobs = []
-    for url in feed_urls:
-        all_jobs.extend(fetch_feed(url))
-    log.info("Total raw jobs fetched across all feeds: %d", len(all_jobs))
-    return all_jobs
-
-
-# ---------------------------------------------------------------------------
-# FILTERING & DEDUPLICATION
-# ---------------------------------------------------------------------------
-
-def filter_new_jobs(jobs: list[dict], seen: set) -> tuple[list[dict], int]:
-    """
-    Remove already-seen jobs.
-    Returns (new_jobs, duplicate_count).
-    """
-    new_jobs = []
-    duplicates = 0
-    for job in jobs:
-        if job["id"] in seen:
-            duplicates += 1
-        else:
-            new_jobs.append(job)
-    log.info("New jobs (not seen before): %d | Duplicates skipped: %d", len(new_jobs), duplicates)
-    return new_jobs, duplicates
-
-
-def apply_scoring(jobs: list[dict], min_score: int) -> tuple[list[dict], int]:
-    """
-    Score each job and filter by MIN_SCORE.
-    Returns (qualifying_jobs, filtered_out_count).
-    """
-    qualifying = []
-    filtered_out = 0
-    for job in jobs:
-        score, matched = score_job(job["text"] + " " + job["title"])
-        job["score"]   = score
-        job["matched"] = matched
-        if score >= min_score:
-            qualifying.append(job)
-        else:
-            log.debug(
-                "  FILTERED OUT (score=%d < %d): %s | keywords=%s",
-                score, min_score, job["title"][:60], matched or "none"
-            )
-            filtered_out += 1
-
-    log.info(
-        "After scoring filter (min=%d): %d qualify | %d filtered out",
-        min_score, len(qualifying), filtered_out
-    )
-    return qualifying, filtered_out
-
-
-# ---------------------------------------------------------------------------
-# TELEGRAM
-# ---------------------------------------------------------------------------
-
-def send_telegram(message: str) -> bool:
-    """Send a message to Telegram. Returns True on success."""
+def send_telegram(msg: str, parse_mode: str = "HTML") -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id":    TELEGRAM_CHAT_ID,
-        "text":       message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
     try:
-        resp = requests.post(url, json=payload, timeout=10)
-        if resp.ok:
-            log.debug("Telegram message sent successfully.")
-            return True
-        else:
-            log.error("Telegram API error %d: %s", resp.status_code, resp.text[:200])
-            return False
-    except requests.RequestException as exc:
-        log.error("Failed to send Telegram message: %s", exc)
+        r = requests.post(url, json={
+            "chat_id":    TELEGRAM_CHAT_ID,
+            "text":       msg,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True,
+        }, timeout=10)
+        if not r.ok:
+            log.error("❌ تيليجرام error %d: %s", r.status_code, r.text[:200])
+        return r.ok
+    except Exception as e:
+        log.error("❌ فشل إرسال تيليجرام: %s", e)
         return False
 
-
-def format_job_message(job: dict) -> str:
-    """Format a single job as an HTML Telegram message."""
-    matched_str = ", ".join(f"#{kw.replace(' ', '_')}" for kw in job["matched"]) or "—"
+def format_job(job: dict, score: int, matched: list[str]) -> str:
+    kws = " ".join(f"#{k.replace(' ','_')}" for k in matched) if matched else "—"
+    # اقصّر العنوان لو طويل
+    title = job["title"][:100]
     return (
-        f"🆕 <b>{job['title']}</b>\n"
-        f"📌 <b>Source:</b> {job['source']}\n"
-        f"⭐ <b>Score:</b> {job['score']}\n"
-        f"🏷 <b>Keywords:</b> {matched_str}\n"
-        f"🔗 <a href=\"{job['link']}\">View Job</a>"
+        f"🆕 <b>{title}</b>\n"
+        f"📌 <b>المصدر:</b> {job['source']}\n"
+        f"⭐ <b>النقاط:</b> {score}\n"
+        f"🏷 <b>الكلمات:</b> {kws}\n"
+        f"🔗 <a href=\"{job['link']}\">افتح الوظيفة</a>"
     )
 
+# =====================================================================
+# الدالة الرئيسية
+# =====================================================================
 
-def send_summary(total_fetched: int, new_count: int, sent_count: int,
-                 duplicates: int, filtered_out: int) -> None:
-    """Send a diagnostic summary when no jobs are sent."""
-    if sent_count > 0:
-        return  # No need for a summary if jobs were sent
-    if total_fetched == 0:
-        reason = "⚠️ No jobs fetched — feeds may be empty, unreachable, or incorrectly configured."
-    elif new_count == 0:
-        reason = f"ℹ️ All {duplicates} fetched jobs were already seen (no new postings)."
-    elif filtered_out > 0:
-        reason = (
-            f"ℹ️ {new_count} new job(s) found, but all were filtered out by keyword scoring "
-            f"(min score = {MIN_SCORE}). Consider lowering MIN_SCORE or adding more keywords."
-        )
-    else:
-        reason = "⚠️ Unknown reason — check rss_monitor.log for details."
-
-    msg = f"📋 <b>RSS Monitor Report</b>\n{reason}"
-    send_telegram(msg)
-    log.info("Summary sent to Telegram: %s", reason)
-
-
-# ---------------------------------------------------------------------------
-# MAIN LOOP
-# ---------------------------------------------------------------------------
-
-def run_once() -> None:
-    """One full fetch-filter-notify cycle."""
+def run():
     log.info("=" * 60)
-    log.info("Starting RSS monitor cycle — %s", datetime.utcnow().isoformat())
+    log.info("🚀 بدأ الفحص — %s", datetime.now().strftime("%Y-%m-%d %H:%M"))
 
-    seen = load_seen_jobs()
+    send_telegram(f"🔍 بدأ فحص الوظائف... (آخر {HOURS_BACK} ساعة)")
 
-    # 1. Fetch
-    all_jobs = fetch_all_feeds(RSS_FEEDS)
+    seen = load_seen()
 
-    # 2. Remove duplicates
-    new_jobs, duplicates = filter_new_jobs(all_jobs, seen)
+    stats = {
+        "total_fetched":  0,
+        "already_seen":   0,
+        "too_old":        0,
+        "low_score":      0,
+        "sent":           0,
+    }
 
-    # 3. Score & filter
-    qualifying, filtered_out = apply_scoring(new_jobs, MIN_SCORE)
+    for url in RSS_FEEDS:
+        jobs = fetch_feed(url)
+        stats["total_fetched"] += len(jobs)
 
-    # 4. Sort by score descending
-    qualifying.sort(key=lambda j: j["score"], reverse=True)
+        for job in jobs:
+            # 1. مشوفناها قبل كده؟
+            if job["id"] in seen:
+                stats["already_seen"] += 1
+                log.debug("⏭ مكررة: %s", job["title"][:50])
+                continue
 
-    # 5. Send to Telegram
-    sent = 0
-    for job in qualifying:
-        log.info("Sending job (score=%d): %s", job["score"], job["title"][:80])
-        msg = format_job_message(job)
-        if send_telegram(msg):
-            seen.add(job["id"])
-            sent += 1
-            time.sleep(0.5)  # Avoid Telegram rate limits
+            # 2. قديمة أوي؟
+            if not is_recent(job["published"]):
+                stats["too_old"] += 1
+                seen.add(job["id"])
+                log.debug("⏳ قديمة: %s", job["title"][:50])
+                continue
 
-    # Mark all new (even non-qualifying) as seen to avoid re-checking
-    for job in new_jobs:
-        seen.add(job["id"])
+            # 3. النقاط
+            score, matched = score_job(job["title"], job["desc"])
+            if score < MIN_SCORE:
+                stats["low_score"] += 1
+                seen.add(job["id"])
+                log.debug("📉 نقاط قليلة (%d): %s", score, job["title"][:50])
+                continue
 
-    save_seen_jobs(seen)
+            # ✅ وظيفة تستاهل — ابعتها!
+            log.info("✅ إرسال (score=%d): %s", score, job["title"][:70])
+            msg = format_job(job, score, matched)
+            if send_telegram(msg):
+                stats["sent"] += 1
+                seen.add(job["id"])
+                time.sleep(0.5)
 
-    log.info(
-        "Cycle complete — fetched=%d | new=%d | sent=%d | duplicates=%d | filtered=%d",
-        len(all_jobs), len(new_jobs), sent, duplicates, filtered_out
-    )
+    # حفظ الـ seen
+    save_seen(seen)
 
-    # 6. Notify if nothing was sent
-    send_summary(len(all_jobs), len(new_jobs), sent, duplicates, filtered_out)
+    # ملخص
+    log.info("📊 النتيجة: %s", stats)
 
+    if stats["sent"] == 0:
+        reasons = []
+        if stats["already_seen"] > 0:
+            reasons.append(f"• {stats['already_seen']} وظيفة مشوفناها قبل كده")
+        if stats["too_old"] > 0:
+            reasons.append(f"• {stats['too_old']} وظيفة قديمة (أكتر من {HOURS_BACK} ساعة)")
+        if stats["low_score"] > 0:
+            reasons.append(f"• {stats['low_score']} وظيفة منقطعتش (نقاط أقل من {MIN_SCORE})")
+        if stats["total_fetched"] == 0:
+            reasons.append("• مش قادر يجيب الفيدات — تحقق من الإنترنت أو الـ URLs")
 
-def main() -> None:
-    log.info("RSS Job Monitor started. Poll interval: %ds | Min score: %d", POLL_INTERVAL, MIN_SCORE)
-    if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        log.warning("⚠️  TELEGRAM_BOT_TOKEN is not configured — Telegram messages will fail.")
+        reason_text = "\n".join(reasons) if reasons else "• مجتش وظائف جديدة"
+        summary = (
+            f"📋 <b>تقرير الفحص</b>\n"
+            f"🔢 إجمالي المجلوبة: {stats['total_fetched']}\n"
+            f"📭 مفيش وظائف اتبعتت لأن:\n{reason_text}"
+        )
+        send_telegram(summary)
+    else:
+        send_telegram(f"✅ تم إرسال <b>{stats['sent']}</b> وظيفة جديدة!")
 
-    while True:
-        try:
-            run_once()
-        except Exception as exc:
-            log.exception("Unhandled exception in run_once(): %s", exc)
+    log.info("=" * 60)
 
-        if POLL_INTERVAL <= 0:
-            log.info("POLL_INTERVAL=0, running once and exiting.")
-            break
-
-        log.info("Sleeping %d seconds until next cycle…", POLL_INTERVAL)
-        time.sleep(POLL_INTERVAL)
-
+# =====================================================================
 
 if __name__ == "__main__":
-    main()
+    run()
