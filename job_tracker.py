@@ -1,57 +1,150 @@
-import requests
-from bs4 import BeautifulSoup
+import feedparser
+import json
 import time
+import requests
 import logging
+import re
+import unicodedata
+from datetime import datetime
+from pathlib import Path
+
+from config import *
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# --- بياناتك ---
-TOKEN = "8707793026:AAG0WZMRIb54ibbq0EDKGNlq75Q5Xok1NuA"
-CHAT_ID = "1237819642"
 
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+# -----------------------------
+# تحميل الوظائف اللي اتشافت
+# -----------------------------
+def load_seen():
+    if Path(SEEN_JOBS_FILE).exists():
+        with open(SEEN_JOBS_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    return set()
+
+
+def save_seen(seen):
+    with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(seen), f, ensure_ascii=False)
+
+
+# -----------------------------
+# تنظيف النص
+# -----------------------------
+def normalize(text):
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFC", text)
+    return text.lower()
+
+
+def clean_html(text):
+    return re.sub(r"<[^>]+>", "", text)
+
+
+# -----------------------------
+# حساب الاسكور
+# -----------------------------
+def score_job(text):
+    text = normalize(text)
+    score = 0
+    matched = []
+
+    for k, v in KEYWORD_SCORES.items():
+        if normalize(k) in text:
+            score += v
+            matched.append(k)
+
+    if score == 0:
+        score = 1
+
+    return score, matched
+
+
+# -----------------------------
+# ارسال تليجرام
+# -----------------------------
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=15)
-    except: pass
+        requests.post(url, json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": msg,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        }, timeout=10)
+    except Exception as e:
+        log.error(f"Telegram error: {e}")
 
+
+# -----------------------------
+# تشغيل
+# -----------------------------
 def run():
-    send_telegram("📡 *بدء عملية الصيد من الروابط الرسمية (RSS)... جاري جلب المشاريع الآن!*")
-    
-    # الروابط الرسمية التي لا يمكن حظرها بسهولة
-    sources = [
-        ("https://mostaql.com/projects/feed", "Mostaql - مستقل"),
-        ("https://khamsat.com/projects/feed", "Khamsat - خمسات"),
-        ("https://kafiil.com/feed/projects", "Kafiil - كفيل"),
-        ("https://nafezly.com/projects/feed", "Nafezly - نفذلي")
-    ]
-    
-    found_total = 0
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    seen = load_seen()
 
-    for rss_url, name in sources:
-        try:
-            log.info(f"فحص {name}...")
-            r = requests.get(rss_url, headers=headers, timeout=20)
-            if r.status_code == 200:
-                # نستخدم 'xml' لأن الروابط دي بتخرج بيانات بصيغة XML
-                soup = BeautifulSoup(r.content, "xml")
-                items = soup.find_all("item")
-                
-                for item in items[:10]: # هات أول 10 مشاريع من كل موقع
-                    title = item.find("title").text.strip()
-                    link = item.find("link").text.strip()
-                    
-                    send_telegram(f"🔥 *مشروع جديد من {name}*\n📌 {title}\n🔗 [اضغط للتقديم]({link})")
-                    found_total += 1
-                    time.sleep(1) # تأخير لضمان وصول الرسائل
-            else:
-                log.error(f"فشل الوصول لـ {name}: {r.status_code}")
-        except Exception as e:
-            log.error(f"خطأ في {name}: {e}")
+    log.info("جلب الوظائف...")
 
-    send_telegram(f"🏁 *انتهى الفحص!* وجدنا {found_total} مشروع متاح. لو الرقم لسه صفر، جرب تشغل الـ Action كمان 5 دقائق.")
+    all_jobs = []
 
+    for url in RSS_FEEDS:
+        feed = feedparser.parse(url)
+
+        for entry in feed.entries:
+            job_id = entry.get("id") or entry.get("link")
+
+            title = entry.get("title", "")
+            link = entry.get("link", "")
+            summary = entry.get("summary", "")
+
+            text = clean_html(title + " " + summary)
+
+            all_jobs.append({
+                "id": job_id,
+                "title": title,
+                "link": link,
+                "text": text,
+                "source": url
+            })
+
+    log.info(f"تم جلب {len(all_jobs)} وظيفة")
+
+    new_jobs = [j for j in all_jobs if j["id"] not in seen]
+
+    log.info(f"وظائف جديدة: {len(new_jobs)}")
+
+    sent = 0
+
+    for job in new_jobs:
+        score, matched = score_job(job["text"] + job["title"])
+
+        if score >= MIN_SCORE:
+            msg = (
+                f"🆕 <b>{job['title']}</b>\n"
+                f"📌 المصدر: {job['source']}\n"
+                f"⭐ الاسكور: {score}\n"
+                f"🏷 الكلمات: {', '.join(matched) if matched else '—'}\n"
+                f"🔗 {job['link']}"
+            )
+
+            send_telegram(msg)
+            seen.add(job["id"])
+            sent += 1
+            time.sleep(0.5)
+
+    save_seen(seen)
+
+    if sent == 0:
+        send_telegram("⚠️ مفيش شغل جديد أو كله متسجل قبل كده")
+
+    log.info("خلصت الدورة")
+
+
+# -----------------------------
+# لوب مستمر
+# -----------------------------
 if __name__ == "__main__":
-    run()
+    while True:
+        run()
+        time.sleep(POLL_INTERVAL)
