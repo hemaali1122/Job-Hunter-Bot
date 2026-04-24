@@ -1,27 +1,27 @@
-name: Job Hunter Bot 24/7
+name: Job Hunter Bot
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *' # السيستم هيشتغل "أوتوماتيك" كل 5 دقائق
-  workflow_dispatch:      # عشان لو حبيت تشغله يدوي في أي وقت
+    - cron: "*/5 * * * *"
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - name: تحميل الكود
+        uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - name: تشغيل بايثون
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.11"
 
-      - name: Install Dependencies
-        run: pip install -r requirements.txt
+      - name: تثبيت المكتبات
+        run: |
+          pip install feedparser requests
 
-      - name: Execute Bot
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python job_tracker.py
+      - name: تشغيل البوت
+        run: |
+          python job_tracker.py
